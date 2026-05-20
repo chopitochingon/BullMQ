@@ -2,8 +2,9 @@
 
 **Fecha:** 20 de mayo de 2026  
 **Elaborado por:** Equipo de Infraestructura  
-**Versión:** 1.0  
+**Versión:** 1.1  
 **Clasificación:** Interno  
+**Región de referencia:** EU (eu-west-1 / europe-west1 / West Europe)  
 
 ---
 
@@ -25,9 +26,9 @@
 
 ---
 
-## 1. Resumen Ejecutivo
+## 1. Resumen
 
-El equipo de desarrollo solicita la disponibilización del servicio **BullMQ** en entorno productivo. BullMQ es una librería open source (licencia MIT) de colas de mensajes y procesamiento de trabajos en segundo plano, construida sobre **Redis**. Es utilizada por organizaciones como Microsoft, Vendure, Datawrapper, NestJS, Langfuse y muchas más.
+BullMQ es una librería open source (licencia MIT) de colas de mensajes y procesamiento de trabajos en segundo plano, construida sobre **Redis**. Es utilizada por organizaciones como Microsoft, Vendure, Datawrapper, NestJS, Langfuse y muchas más.
 
 **Conclusión principal:** BullMQ es **técnicamente viable** y **ampliamente adoptado** en producción. El coste principal recae en la infraestructura Redis gestionada en el proveedor cloud correspondiente, no en la librería en sí (que es gratuita). El rango de coste mensual estimado va desde **~$0/mes** (desarrollo/pruebas con Free Tier) hasta **varios miles de dólares** dependiendo de la escala y requisitos de alta disponibilidad.
 
@@ -66,16 +67,35 @@ BullMQ es la cola de mensajes distribuida más rápida y fiable basada en Redis 
 
 ### Diagrama de componentes
 
+> 📎 **Diagrama interactivo:** Abrir [`diagrams/bullmq-architecture.drawio`](diagrams/bullmq-architecture.drawio) con [draw.io](https://app.diagrams.net/) o la extensión de VS Code "Draw.io Integration".
+
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  Productor   │────▶│    Redis     │◀────│   Worker     │
-│  (API/App)   │     │  (Backend)   │     │ (Procesador) │
-└─────────────┘     └─────────────┘     └─────────────┘
-       │                    │                    │
-       │              ┌─────┴─────┐              │
-       └─────────────▶│ QueueEvents│◀─────────────┘
-                      │ (Listener) │
-                      └───────────┘
+┌──────────────────────┐       ┌───────────────────────────────┐       ┌──────────────────────────┐
+│     PRODUCTORES      │       │        BACKEND REDIS          │       │   CONSUMIDORES (Workers) │
+│                      │       │                               │       │                          │
+│  ┌────────────────┐  │       │  ┌─────────────────────────┐  │       │  ┌────────────────────┐  │
+│  │   API REST     │──┼──────▶│  │    Redis / Valkey       │  │──────▶│  │  Worker 1 (emails) │  │
+│  │ Express/Fastify│  │       │  │                         │  │       │  └────────────────────┘  │
+│  └────────────────┘  │       │  │  • ElastiCache          │  │       │  ┌────────────────────┐  │
+│  ┌────────────────┐  │       │  │    (eu-west-1)          │  │──────▶│  │  Worker 2 (imagen) │  │
+│  │ Microservicio  │──┼──────▶│  │  • Memorystore          │  │       │  └────────────────────┘  │
+│  │ NestJS/Node.js │  │       │  │    (europe-west1)       │  │       │  ┌────────────────────┐  │
+│  └────────────────┘  │       │  │  • Azure Cache          │  │──────▶│  │  Worker 3 (datos)  │  │
+│  ┌────────────────┐  │       │  │    (West Europe)        │  │       │  └────────────────────┘  │
+│  │ Cron/Scheduler │──┼──────▶│  │                         │  │       │  ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐  │
+│  │ Jobs program.  │  │       │  │  noeviction policy      │  │─ ─ ─▶│    Worker N (escala)    │
+│  └────────────────┘  │       │  └─────────────────────────┘  │       │  └ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘  │
+│  ┌────────────────┐  │       │                               │       │                          │
+│  │  Dashboard     │╌╌┼╌╌╌╌╌▶│  ┌──────────┐ ┌────────────┐ │       │  ⚡ Escalado horizontal  │
+│  │ Taskforce.sh   │  │       │  │  Queue   │ │QueueEvents │ │       │     ilimitado             │
+│  └────────────────┘  │       │  └──────────┘ └────────────┘ │       │                          │
+└──────────────────────┘       └───────────────────────────────┘       └──────────────────────────┘
+                                         │
+                                ┌────────┴────────┐
+                                │  FlowProducer   │
+                                │ (Flujos padre-  │
+                                │  hijo)          │
+                                └─────────────────┘
 ```
 
 ### Requisitos mínimos
@@ -135,7 +155,8 @@ BullMQ es compatible con:
 
 > **Fuente oficial:** [https://aws.amazon.com/elasticache/pricing/](https://aws.amazon.com/elasticache/pricing/)  
 > **Calculadora:** [https://calculator.aws/#/createCalculator/ElastiCache](https://calculator.aws/#/createCalculator/ElastiCache)  
-> **Región de referencia:** US East (N. Virginia) — `us-east-1`
+> **API de precios:** [https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonElastiCache/current/eu-west-1/index.json](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonElastiCache/current/eu-west-1/index.json)  
+> **Región de referencia:** EU West (Ireland) — `eu-west-1`
 
 ### 5.1 Free Tier
 
@@ -147,30 +168,31 @@ BullMQ es compatible con:
 
 Escalado automático sin gestión de nodos. Ideal para cargas variables.
 
-| Concepto | Valkey | Redis OSS |
+| Concepto | Valkey (eu-west-1) | Redis OSS (eu-west-1) |
 |---|---|---|
-| **Almacenamiento** | $0.094/GB-hora | $0.14/GB-hora |
+| **Almacenamiento** | $0.094/GB-hora | $0.140/GB-hora |
 | **Procesamiento (ECPUs)** | $0.0025/millón ECPUs | $0.0038/millón ECPUs |
 | **Mínimo almacenamiento** | 100 MB | 1 GB |
 
-**Ejemplo estimado (10 GB, 50K req/s):**
-- Almacenamiento: 10 GB × $0.084 = **$0.84/hora**
-- ECPUs: 180M ECPUs × $0.0023/M = **$0.414/hora**
-- **Total: ~$1.25/hora ≈ $912/mes**
+**Ejemplo estimado (10 GB, 50K req/s, Valkey eu-west-1):**
+- Almacenamiento: 10 GB × $0.094 = **$0.94/hora**
+- ECPUs: 180M ECPUs × $0.0025/M = **$0.45/hora**
+- **Total: ~$1.39/hora ≈ $1,015/mes**
 
 ### 5.3 Opción On-Demand (Nodos gestionados)
 
 Configuración manual con control total del dimensionamiento.
 
-| Tipo de nodo | vCPU | Memoria | Precio/hora (Redis OSS) | Precio/mes estimado |
-|---|---|---|---|---|
-| cache.t3.micro | 2 | 0.5 GB | ~$0.017 | ~$12 |
-| cache.t3.small | 2 | 1.37 GB | ~$0.034 | ~$25 |
-| cache.t3.medium | 2 | 3.09 GB | ~$0.068 | ~$50 |
-| cache.m5.large | 2 | 6.38 GB | ~$0.172 | ~$123 |
-| cache.r7g.large | 2 | 13.07 GB | ~$0.243 | ~$174 |
-| cache.r7g.xlarge | 4 | 26.32 GB | ~$0.487 | ~$350 |
-| cache.r7g.2xlarge | 8 | 52.82 GB | ~$0.974 | ~$701 |
+| Tipo de nodo | vCPU | Memoria | Redis OSS (eu-west-1) | Valkey (eu-west-1) | Precio/mes Redis OSS |
+|---|---|---|---|---|---|
+| cache.t3.micro | 2 | 0.5 GB | $0.018/hr | $0.0144/hr | ~$13 |
+| cache.t3.small | 2 | 1.37 GB | $0.036/hr | $0.0288/hr | ~$26 |
+| cache.t3.medium | 2 | 3.09 GB | $0.072/hr | $0.0576/hr | ~$53 |
+| cache.m5.large | 2 | 6.38 GB | $0.172/hr | $0.1376/hr | ~$126 |
+| cache.m7g.large | 2 | 6.38 GB | $0.174/hr | $0.1392/hr | ~$127 |
+| cache.r7g.large | 2 | 13.07 GB | $0.243/hr | $0.1944/hr | ~$177 |
+| cache.r7g.xlarge | 4 | 26.32 GB | $0.487/hr | $0.3896/hr | ~$356 |
+| cache.r7g.2xlarge | 8 | 52.82 GB | $0.974/hr | $0.7792/hr | ~$711 |
 
 > **Nota:** Valkey ofrece un **20% de descuento** respecto a Redis OSS en nodos on-demand.
 
@@ -191,16 +213,16 @@ Configuración manual con control total del dimensionamiento.
 | Backups | **$0.085/GB/mes** |
 | Extended Support (Redis EOL) | **+80% (Año 1-2), +160% (Año 3)** |
 
-### 5.6 Estimaciones por escenario (AWS, región us-east-1)
+### 5.6 Estimaciones por escenario (AWS, región eu-west-1)
 
-| Escenario | Configuración | Coste mensual estimado |
-|---|---|---|
-| **Dev/Test** | 1× cache.t3.micro (Free Tier) | **$0** (12 meses) |
-| **Dev/Test** | 1× cache.t3.small | **~$25/mes** |
-| **Prod Básica** | 1× cache.m5.large + réplica (2 nodos) | **~$228/mes** |
-| **Prod Media** | 3 shards × 2 nodos cache.r7g.large | **~$766/mes** |
-| **Prod Enterprise** | 6 shards × 2 nodos cache.r7g.xlarge | **~$3,060/mes** |
-| **Serverless (10GB, 50K rps)** | ElastiCache Serverless Valkey | **~$912/mes** |
+| Escenario | Configuración | Coste mensual Redis OSS | Con Valkey (~20% menos) |
+|---|---|---|---|
+| **Dev/Test** | 1× cache.t3.micro (Free Tier) | **$0** (12 meses) | $0 |
+| **Dev/Test** | 1× cache.t3.small | **~$26/mes** | ~$21/mes |
+| **Prod Básica** | 1× cache.m5.large + réplica (2 nodos) | **~$251/mes** | ~$201/mes |
+| **Prod Media** | 3 shards × 2 nodos cache.r7g.large | **~$1,064/mes** | ~$851/mes |
+| **Prod Enterprise** | 6 shards × 2 nodos cache.r7g.xlarge | **~$4,266/mes** | ~$3,413/mes |
+| **Serverless (10GB, 50K rps)** | ElastiCache Serverless Valkey | — | **~$1,015/mes** |
 
 ---
 
@@ -208,7 +230,8 @@ Configuración manual con control total del dimensionamiento.
 
 > **Fuente oficial:** [https://cloud.google.com/memorystore/docs/redis/pricing](https://cloud.google.com/memorystore/docs/redis/pricing)  
 > **Calculadora:** [https://cloud.google.com/products/calculator#tab=memorystore](https://cloud.google.com/products/calculator#tab=memorystore)  
-> **Región de referencia:** Iowa (us-central1)
+> **Catálogo SKUs:** [https://cloud.google.com/skus/?filter=memorystore+redis](https://cloud.google.com/skus/?filter=memorystore+redis)  
+> **Región de referencia:** Belgium (europe-west1)
 
 ### 6.1 Tiers de servicio
 
@@ -217,27 +240,31 @@ Configuración manual con control total del dimensionamiento.
 | **Basic** | Instancia Redis standalone | Desarrollo, caché simple |
 | **Standard** | Alta disponibilidad con réplica cross-zone y failover automático | Producción |
 
-### 6.2 Precios por GiB/hora (Iowa, us-central1)
+### 6.2 Precios por GiB/hora (Belgium, europe-west1)
 
 #### Basic Tier
 
 | Tier de capacidad | Rango | Precio/GiB-hora | Precio/GiB-mes (~730h) |
 |---|---|---|---|
-| M1 | 1 – 4 GB | $0.049 | ~$35.77 |
-| M2 | 5 – 10 GB | $0.027 | ~$19.71 |
-| M3 | 11 – 35 GB | $0.023 | ~$16.79 |
-| M4 | 36 – 100 GB | $0.019 | ~$13.87 |
-| M5 | > 100 GB | $0.016 | ~$11.68 |
+| M2 | 5 – 10 GB | $0.032 | ~$23.36 |
+| M4 | 36 – 100 GB | $0.022 | ~$16.06 |
 
-#### Standard Tier (con HA)
+#### Standard Tier (con HA — precio por capacidad, incluye réplica)
 
 | Tier de capacidad | Rango | Precio/GiB-hora | Precio/GiB-mes (~730h) |
 |---|---|---|---|
-| M1 | 1 – 4 GB | $0.064 | ~$46.72 |
-| M2 | 5 – 10 GB | $0.054 | ~$39.42 |
-| M3 | 11 – 35 GB | $0.046 | ~$33.58 |
-| M4 | 36 – 100 GB | $0.035 | ~$25.55 |
-| M5 | > 100 GB | $0.030 | ~$21.90 |
+| M1 | 1 – 4 GB | $0.086 | ~$62.78 |
+| M4 | 36 – 100 GB | $0.043 | ~$31.39 |
+| M5 | > 100 GB | $0.035 | ~$25.55 |
+
+#### Standard Tier — Precio por nodo individual (con Read Replicas)
+
+| Tier de capacidad | Rango | Precio/GiB-hora/nodo | Precio/GiB-mes/nodo (~730h) |
+|---|---|---|---|
+| M2 | 5 – 10 GB | $0.032 | ~$23.36 |
+| M3 | 11 – 35 GB | $0.026 | ~$18.98 |
+| M4 | 36 – 100 GB | $0.022 | ~$16.06 |
+| M5 | > 100 GB | $0.017 | ~$12.41 |
 
 ### 6.3 Committed Use Discounts (CUDs)
 
@@ -255,16 +282,15 @@ Configuración manual con control total del dimensionamiento.
 | Egress entre regiones (Asia/Oceanía) | **$0.08/GB** |
 | Egress intercontinental | **$0.08/GB** |
 
-### 6.5 Estimaciones por escenario (GCP, us-central1)
+### 6.5 Estimaciones por escenario (GCP, europe-west1)
 
 | Escenario | Configuración | Coste mensual estimado |
 |---|---|---|
-| **Dev/Test** | Basic, 1 GB (M1) | **~$36/mes** |
-| **Dev/Test** | Basic, 5 GB (M2) | **~$99/mes** |
-| **Prod Básica** | Standard, 5 GB (M2) | **~$197/mes** |
-| **Prod Media** | Standard, 20 GB (M3) | **~$672/mes** |
-| **Prod Enterprise** | Standard, 50 GB (M4) | **~$1,278/mes** |
-| **Prod Enterprise + réplicas** | Standard, 50 GB (M4) × 2 nodos | **~$1,387/mes** |
+| **Dev/Test** | Basic, 5 GB (M2) | **~$117/mes** |
+| **Prod Básica** | Standard, 5 GB (M1) | **~$314/mes** |
+| **Prod Media** | Standard, 50 GB (M4) | **~$1,570/mes** |
+| **Prod Enterprise** | Standard, 100 GB (M5) | **~$2,555/mes** |
+| **Prod Enterprise + réplicas** | Standard Node, 50 GB (M4) × 3 nodos | **~$2,409/mes** |
 
 ---
 
@@ -272,7 +298,9 @@ Configuración manual con control total del dimensionamiento.
 
 > **Fuente oficial:** [https://azure.microsoft.com/en-us/pricing/details/cache/](https://azure.microsoft.com/en-us/pricing/details/cache/)  
 > **Calculadora:** [https://azure.microsoft.com/en-us/pricing/calculator/?service=redis-cache](https://azure.microsoft.com/en-us/pricing/calculator/?service=redis-cache)  
-> **Documentación:** [https://learn.microsoft.com/azure/azure-cache-for-redis/](https://learn.microsoft.com/azure/azure-cache-for-redis/)
+> **Documentación:** [https://learn.microsoft.com/azure/azure-cache-for-redis/](https://learn.microsoft.com/azure/azure-cache-for-redis/)  
+> **Región de referencia:** West Europe  
+> **Nota:** Los precios de Azure Cache for Redis son prácticamente idénticos entre US y West Europe.
 
 > ⚠️ **AVISO IMPORTANTE:** Azure Cache for Redis será **retirado el 30/09/2028** y la versión Enterprise el **30/03/2027**. Se recomienda planificar migraciones.
 
@@ -323,7 +351,7 @@ Configuración manual con control total del dimensionamiento.
 
 *E1 recomendado solo para dev/test.
 
-### 7.5 Estimaciones por escenario (Azure)
+### 7.5 Estimaciones por escenario (Azure, West Europe)
 
 | Escenario | Configuración | Coste mensual estimado |
 |---|---|---|
@@ -433,33 +461,34 @@ Dashboard profesional creado por los mismos autores de BullMQ.
 
 ## 11. Tabla Comparativa Global
 
-### 11.1 Comparativa de costes Redis por proveedor (escenario ~6 GB, producción con HA)
+### 11.1 Comparativa de costes Redis por proveedor (escenario ~6 GB, producción con HA) — Regiones EU
 
 | Proveedor | Servicio | Configuración | Coste mensual | SLA |
 |---|---|---|---|---|
-| **AWS** | ElastiCache On-Demand | cache.m5.large × 2 (HA) | **~$228/mes** | 99.99% |
-| **AWS** | ElastiCache Serverless (Valkey) | ~6 GB, tráfico bajo | **~$50-100/mes** | 99.99% |
-| **GCP** | Memorystore Standard | 5 GB (M2) | **~$197/mes** | 99.9% |
-| **Azure** | Standard C3 | 6 GB | **~$329/mes** | 99.9% |
-| **Azure** | Enterprise E1 | 1 GB (dev) | **~$58/mes** | 99.999% |
-| **Upstash** | Pay as You Go + Prod Pack | Variable | **~$200+/mes** | SLA incluido |
+| **AWS** (eu-west-1) | ElastiCache Valkey On-Demand | cache.m5.large × 2 (HA) | **~$201/mes** | 99.99% |
+| **AWS** (eu-west-1) | ElastiCache Redis OSS On-Demand | cache.m5.large × 2 (HA) | **~$251/mes** | 99.99% |
+| **AWS** (eu-west-1) | ElastiCache Serverless Valkey | ~6 GB, tráfico bajo | **~$55-120/mes** | 99.99% |
+| **GCP** (europe-west1) | Memorystore Standard M1 | 5 GB | **~$314/mes** | 99.9% |
+| **Azure** (West Europe) | Standard C3 | 6 GB | **~$329/mes** | 99.9% |
+| **Azure** (West Europe) | Enterprise E1 | 1 GB (dev) | **~$58/mes** | 99.999% |
+| **Upstash** (EU) | Pay as You Go + Prod Pack | Variable | **~$200+/mes** | SLA incluido |
 
-### 11.2 Comparativa de costes Redis por proveedor (escenario ~26 GB, producción)
+### 11.2 Comparativa de costes Redis por proveedor (escenario ~26 GB, producción) — Regiones EU
 
 | Proveedor | Servicio | Configuración | Coste mensual |
 |---|---|---|---|
-| **AWS** | ElastiCache On-Demand | cache.r7g.xlarge × 2 | **~$510/mes** |
-| **AWS** | ElastiCache Reservado (1 año) | cache.r7g.xlarge × 2 | **~$265/mes** |
-| **GCP** | Memorystore Standard M3 | 26 GB | **~$873/mes** |
-| **GCP** | Memorystore CUD 3 años | 26 GB | **~$524/mes** |
-| **Azure** | Premium P3 | 26 GB | **~$1,619/mes** |
-| **Azure** | Premium P3 (reservado 3 años) | 26 GB | **~$729/mes** |
+| **AWS** (eu-west-1) | ElastiCache Valkey On-Demand | cache.r7g.xlarge × 2 | **~$569/mes** |
+| **AWS** (eu-west-1) | ElastiCache Redis OSS On-Demand | cache.r7g.xlarge × 2 | **~$711/mes** |
+| **GCP** (europe-west1) | Memorystore Standard Node M3 × 2 | 26 GB | **~$987/mes** |
+| **GCP** (europe-west1) | Memorystore CUD 3 años | 26 GB | **~$592/mes** |
+| **Azure** (West Europe) | Premium P3 | 26 GB | **~$1,619/mes** |
+| **Azure** (West Europe) | Premium P3 (reservado 3 años) | 26 GB | **~$729/mes** |
 
 ### 11.3 Coste total de propiedad (TCO) estimado — Escenario producción básica
 
 | Componente | Rango de coste mensual |
 |---|---|
-| Redis gestionado (6 GB, HA) | $58 – $329 |
+| Redis gestionado (6 GB, HA, región EU) | $58 – $329 |
 | BullMQ OSS (librería) | **$0** |
 | BullMQ Pro (opcional) | $0 – $116 ($1,395/año) |
 | Taskforce.sh (monitorización, opcional) | $0 – $99.95 |
@@ -486,38 +515,38 @@ Dashboard profesional creado por los mismos autores de BullMQ.
 ### 12.2 Recomendación por proveedor cloud
 
 #### Si ya se usa AWS (RECOMENDADO como primera opción):
-- **Mejor relación coste/rendimiento**
+- **Mejor relación coste/rendimiento** en eu-west-1
 - ElastiCache con motor **Valkey** (20% más barato que Redis OSS)
 - Opción Serverless para cargas variables
 - Free Tier disponible para desarrollo
-- **Coste estimado prod básica: ~$228/mes**
+- **Coste estimado prod básica (eu-west-1): ~$201/mes (Valkey) / ~$251/mes (Redis OSS)**
 
 #### Si ya se usa GCP:
 - Memorystore for Redis con CUDs ofrece buenos descuentos
 - Modelo de precios por GB simple y predecible
-- **Coste estimado prod básica: ~$197/mes**
+- **Coste estimado prod básica (europe-west1): ~$314/mes**
 
 #### Si ya se usa Azure:
 - ⚠️ **Considerar la fecha de retiro del servicio (2027/2028)**
 - Precios generalmente más altos que AWS y GCP
 - Buena opción Enterprise si se necesita SLA 99.999%
-- **Coste estimado prod básica: ~$329/mes**
+- **Coste estimado prod básica (West Europe): ~$329/mes**
 
 ### 12.3 Recomendación por escenario
 
 | Escenario | Recomendación | Coste mensual estimado |
 |---|---|---|
 | **PoC / Desarrollo** | AWS Free Tier o Upstash Free | **$0** |
-| **Startup / Equipo pequeño** | AWS Serverless Valkey o GCP Basic | **$25 – $100/mes** |
-| **Producción estándar** | AWS ElastiCache Valkey On-Demand + Taskforce Starter | **$250 – $350/mes** |
-| **Producción media** | AWS ElastiCache Reservado + BullMQ Pro + Taskforce Growing | **$400 – $800/mes** |
-| **Producción Enterprise** | AWS ElastiCache Reservado multi-shard + BullMQ Pro + Taskforce Enterprise | **$1,000 – $5,000+/mes** |
+| **Startup / Equipo pequeño** | AWS Serverless Valkey (eu-west-1) o GCP Basic (europe-west1) | **$26 – $120/mes** |
+| **Producción estándar** | AWS ElastiCache Valkey On-Demand (eu-west-1) + Taskforce Starter | **$220 – $380/mes** |
+| **Producción media** | AWS ElastiCache Reservado (eu-west-1) + BullMQ Pro + Taskforce Growing | **$450 – $900/mes** |
+| **Producción Enterprise** | AWS ElastiCache Reservado multi-shard (eu-west-1) + BullMQ Pro + Taskforce Enterprise | **$1,100 – $5,500+/mes** |
 
 ### 12.4 Recomendación final
 
 **Se recomienda aprobar la disponibilización del servicio BullMQ** por las siguientes razones:
 
-1. **Coste razonable:** El componente de software (BullMQ) es gratuito. El coste principal es Redis gestionado, que se puede iniciar desde ~$25/mes y escalar según necesidad.
+1. **Coste razonable:** El componente de software (BullMQ) es gratuito. El coste principal es Redis gestionado en región EU, que se puede iniciar desde ~$26/mes y escalar según necesidad.
 
 2. **Bajo riesgo técnico:** Librería madura, ampliamente adoptada y con soporte activo.
 
@@ -576,6 +605,7 @@ Dashboard profesional creado por los mismos autores de BullMQ.
 | Memorystore Documentation | [https://cloud.google.com/memorystore/docs/redis/redis-overview](https://cloud.google.com/memorystore/docs/redis/redis-overview) |
 | GCP Pricing Calculator | [https://cloud.google.com/products/calculator#tab=memorystore](https://cloud.google.com/products/calculator#tab=memorystore) |
 | Committed Use Discounts | [https://cloud.google.com/memorystore/docs/redis/cuds](https://cloud.google.com/memorystore/docs/redis/cuds) |
+| GCP SKU Catalog (precios por región) | [https://cloud.google.com/skus/?filter=memorystore+redis](https://cloud.google.com/skus/?filter=memorystore+redis) |
 
 ### Microsoft Azure
 | Recurso | URL |
