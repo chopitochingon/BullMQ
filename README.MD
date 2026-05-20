@@ -69,34 +69,7 @@ BullMQ es la cola de mensajes distribuida más rápida y fiable basada en Redis 
 
 > 📎 **Diagrama interactivo:** Abrir [`diagrams/bullmq-architecture.drawio`](diagrams/bullmq-architecture.drawio) con [draw.io](https://app.diagrams.net/) o la extensión de VS Code "Draw.io Integration".
 
-```
-┌──────────────────────┐       ┌───────────────────────────────┐       ┌──────────────────────────┐
-│     PRODUCTORES      │       │        BACKEND REDIS          │       │   CONSUMIDORES (Workers) │
-│                      │       │                               │       │                          │
-│  ┌────────────────┐  │       │  ┌─────────────────────────┐  │       │  ┌────────────────────┐  │
-│  │   API REST     │──┼──────▶│  │    Redis / Valkey       │  │──────▶│  │  Worker 1 (emails) │  │
-│  │ Express/Fastify│  │       │  │                         │  │       │  └────────────────────┘  │
-│  └────────────────┘  │       │  │  • ElastiCache          │  │       │  ┌────────────────────┐  │
-│  ┌────────────────┐  │       │  │    (eu-west-1)          │  │──────▶│  │  Worker 2 (imagen) │  │
-│  │ Microservicio  │──┼──────▶│  │  • Memorystore          │  │       │  └────────────────────┘  │
-│  │ NestJS/Node.js │  │       │  │    (europe-west1)       │  │       │  ┌────────────────────┐  │
-│  └────────────────┘  │       │  │  • Azure Cache          │  │──────▶│  │  Worker 3 (datos)  │  │
-│  ┌────────────────┐  │       │  │    (West Europe)        │  │       │  └────────────────────┘  │
-│  │ Cron/Scheduler │──┼──────▶│  │                         │  │       │  ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐  │
-│  │ Jobs program.  │  │       │  │  noeviction policy      │  │─ ─ ─▶│    Worker N (escala)    │
-│  └────────────────┘  │       │  └─────────────────────────┘  │       │  └ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘  │
-│  ┌────────────────┐  │       │                               │       │                          │
-│  │  Dashboard     │╌╌┼╌╌╌╌╌▶│  ┌──────────┐ ┌────────────┐ │       │  ⚡ Escalado horizontal  │
-│  │ Taskforce.sh   │  │       │  │  Queue   │ │QueueEvents │ │       │     ilimitado             │
-│  └────────────────┘  │       │  └──────────┘ └────────────┘ │       │                          │
-└──────────────────────┘       └───────────────────────────────┘       └──────────────────────────┘
-                                         │
-                                ┌────────┴────────┐
-                                │  FlowProducer   │
-                                │ (Flujos padre-  │
-                                │  hijo)          │
-                                └─────────────────┘
-```
+![Diagrama](diagrams/bullmq-architecture.drawio.png)
 
 ### Requisitos mínimos
 
