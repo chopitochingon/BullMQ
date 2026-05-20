@@ -67,15 +67,15 @@ BullMQ es la cola de mensajes distribuida más rápida y fiable basada en Redis 
 ### Diagrama de componentes
 
 ```
-┌─────────────┐       ┌─────────────┐      ┌─────────────┐
-│  Productor  │ ───>  │    Redis    │ <─── │   Worker    │
-│  (API/App)  │       │  (Backend)  │      │ (Procesador)│
-└─────────────┘       └─────────────┘      └─────────────┘
-       │                     │                     │
-       │               ┌─────┴───────┐              │
-       └────────────>  │ QueueEvents │ <────────────┘
-                       │ (Listener)  │
-                       └─────────────┘
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Productor   │────▶│    Redis     │◀────│   Worker     │
+│  (API/App)   │     │  (Backend)   │     │ (Procesador) │
+└─────────────┘     └─────────────┘     └─────────────┘
+       │                    │                    │
+       │              ┌─────┴─────┐              │
+       └─────────────▶│ QueueEvents│◀─────────────┘
+                      │ (Listener) │
+                      └───────────┘
 ```
 
 ### Requisitos mínimos
