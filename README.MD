@@ -149,8 +149,8 @@ Escalado automático sin gestión de nodos. Ideal para cargas variables.
 
 | Concepto | Valkey | Redis OSS |
 |---|---|---|
-| **Almacenamiento** | $0.084/GB-hora | $0.125/GB-hora |
-| **Procesamiento (ECPUs)** | $0.0023/millón ECPUs | $0.0034/millón ECPUs |
+| **Almacenamiento** | $0.094/GB-hora | $0.14/GB-hora |
+| **Procesamiento (ECPUs)** | $0.0025/millón ECPUs | $0.0038/millón ECPUs |
 | **Mínimo almacenamiento** | 100 MB | 1 GB |
 
 **Ejemplo estimado (10 GB, 50K req/s):**
@@ -167,10 +167,10 @@ Configuración manual con control total del dimensionamiento.
 | cache.t3.micro | 2 | 0.5 GB | ~$0.017 | ~$12 |
 | cache.t3.small | 2 | 1.37 GB | ~$0.034 | ~$25 |
 | cache.t3.medium | 2 | 3.09 GB | ~$0.068 | ~$50 |
-| cache.m5.large | 2 | 6.38 GB | ~$0.156 | ~$114 |
-| cache.r7g.large | 2 | 13.07 GB | ~$0.175 | ~$128 |
-| cache.r7g.xlarge | 4 | 26.32 GB | ~$0.350 | ~$255 |
-| cache.r7g.2xlarge | 8 | 52.82 GB | ~$0.699 | ~$510 |
+| cache.m5.large | 2 | 6.38 GB | ~$0.172 | ~$123 |
+| cache.r7g.large | 2 | 13.07 GB | ~$0.243 | ~$174 |
+| cache.r7g.xlarge | 4 | 26.32 GB | ~$0.487 | ~$350 |
+| cache.r7g.2xlarge | 8 | 52.82 GB | ~$0.974 | ~$701 |
 
 > **Nota:** Valkey ofrece un **20% de descuento** respecto a Redis OSS en nodos on-demand.
 
